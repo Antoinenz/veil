@@ -10,6 +10,7 @@ package transport
 
 import (
 	"context"
+	"net"
 	"time"
 
 	"github.com/veilvpn/veil/internal/config"
@@ -30,6 +31,18 @@ type Conn interface {
 	Close() error
 	// Transport reports which transport produced this connection.
 	Transport() config.TransportName
+}
+
+// Listener is the server side of a transport: it accepts inbound tunnel
+// connections. All concrete listeners (UDP, TCP, TLS, WSS) implement it so the
+// gateway can serve any mix of transports uniformly.
+type Listener interface {
+	// Accept returns the next inbound connection.
+	Accept() (Conn, error)
+	// Close stops the listener.
+	Close() error
+	// Addr is the local listen address.
+	Addr() net.Addr
 }
 
 // Dialer establishes client-side connections for one transport.

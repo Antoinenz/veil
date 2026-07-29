@@ -67,7 +67,15 @@ make vet
         (`internal/server`, `internal/client`) — TUN ⇄ link ⇄ pool ⇄ NAT
   - [x] **live tunnel verified**: `sudo bash deploy/scripts/e2e-netns.sh`
         pings across the encrypted tunnel between two network namespaces
-- [ ] **M2** — multi-transport (TCP/TLS/WSS) + auto-selector with failover
+- [x] **M2** — multi-transport + auto-selection, verified live
+  - [x] stream framing + TCP / TLS / WSS transports (`internal/transport`)
+  - [x] **WSS obfuscation** on :443 (WebSocket-over-TLS) + decoy website
+  - [x] link-level Happy-Eyeballs auto-selection wired into `veil up`
+        (races transports, first working handshake wins)
+  - [x] multi-listener gateway (UDP + WSS) in `veil-server run`
+  - [x] **hostile-network fallback verified**: `sudo MODE=blockudp bash
+        deploy/scripts/e2e-netns.sh` drops UDP → client auto-falls back to
+        WSS/443 and the tunnel still works
 - [ ] **M3** — control plane (invite enrollment, device store, admin UI, DNS, kill-switch)
 - [ ] **M4** — Windows (Wintun, service, firewall) + tray GUI
 - [ ] **M5** — active-probing resistance (decoy site), autocert, one-line self-host, docs

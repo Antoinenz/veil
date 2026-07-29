@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"sync"
 
+	"github.com/veilvpn/veil/internal/certutil"
 	"github.com/veilvpn/veil/internal/config"
 	"github.com/veilvpn/veil/internal/control"
 	"github.com/veilvpn/veil/internal/ippool"
@@ -76,35 +77,65 @@ func (s *Server) Run(ctx context.Context) error {
 		s.ifOK = true
 	}
 
-	lis, err := transport.ListenUDP(s.cfg.ListenUDP)
+	// UDP transport (fastest) and the WSS/HTTPS transport (obfuscation + decoy
+	// site) share the effort of accepting tunnels. Both feed the same handler.
+	udpLis, err := transport.ListenUDP(s.cfg.ListenUDP)
 	if err != nil {
 		return err
 	}
-	log.Printf("veil-server: %s up as %s, listening udp %s (egress %q)",
-		s.iface, gwPrefix, lis.Addr(), s.cfg.EgressInterface)
+	cert, err := certutil.SelfSigned(s.cfg.Domain)
+	if err != nil {
+		return err
+	}
+	wssLis, err := transport.ListenWSS(s.cfg.ListenTLS, cert, nil)
+	if err != nil {
+		udpLis.Close()
+		return err
+	}
+	listeners := []transport.Listener{udpLis, wssLis}
+
+	log.Printf("veil-server: %s up as %s; udp %s + wss %s%s (egress %q)",
+		s.iface, gwPrefix, udpLis.Addr(), wssLis.Addr(), transport.TunnelPath, s.cfg.EgressInterface)
 
 	go s.tunToClients()
 
 	go func() {
 		<-ctx.Done()
-		lis.Close()
+		for _, l := range listeners {
+			l.Close()
+		}
 		s.dev.Close()
 		if s.ifOK {
 			_ = s.nc.RemoveMasquerade(s.pool.Prefix(), s.cfg.EgressInterface)
 		}
 	}()
 
+	var wg sync.WaitGroup
+	for _, l := range listeners {
+		wg.Add(1)
+		go func(l transport.Listener) {
+			defer wg.Done()
+			s.acceptLoop(ctx, l)
+		}(l)
+	}
+	wg.Wait()
+	return nil
+}
+
+// acceptLoop accepts connections from one listener until it closes or ctx ends.
+func (s *Server) acceptLoop(ctx context.Context, lis transport.Listener) {
 	for {
 		conn, err := lis.Accept()
 		if err != nil {
-			select {
-			case <-ctx.Done():
-				return nil
-			default:
-				return err
-			}
+			return // listener closed (shutdown) or fatal accept error
 		}
-		go s.handleConn(conn)
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+			return
+		default:
+			go s.handleConn(conn)
+		}
 	}
 }
 

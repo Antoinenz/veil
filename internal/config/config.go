@@ -54,6 +54,10 @@ type ClientConfig struct {
 	// ServerPublicKey is the server's static X25519 public key (base64 std),
 	// required by the initiator for the Noise IK handshake. Learned at enrollment.
 	ServerPublicKey string `json:"server_public_key"`
+	// UDPPort / TLSPort are the server ports for the UDP and TLS-based (TLS/WSS)
+	// transports respectively. Both default to "443".
+	UDPPort string `json:"udp_port,omitempty"`
+	TLSPort string `json:"tls_port,omitempty"`
 	// TransportOrder overrides DefaultTransportOrder if set.
 	TransportOrder []TransportName `json:"transport_order,omitempty"`
 	// HandshakeTimeout bounds each transport attempt during auto-selection.
@@ -98,6 +102,8 @@ func DefaultServer() ServerConfig {
 // DefaultClient returns a ClientConfig populated with sensible defaults.
 func DefaultClient() ClientConfig {
 	return ClientConfig{
+		UDPPort:          "443",
+		TLSPort:          "443",
 		HandshakeTimeout: Duration(8 * time.Second),
 		KillSwitch:       true,
 		DataDir:          defaultClientDataDir(),

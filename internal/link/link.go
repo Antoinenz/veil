@@ -8,6 +8,7 @@
 package link
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -68,6 +69,39 @@ func Client(conn transport.Conn, static *noise.KeyPair, serverStatic, psk []byte
 		return nil, err
 	}
 	return &Link{conn: conn, sess: sess, peer: hs.PeerStatic()}, nil
+}
+
+// Dial connects using dialer and immediately performs the client handshake,
+// returning a ready Link. On any failure the underlying connection is closed.
+//
+// Because this drives a full round-trip handshake, it is the correct unit for
+// transport auto-selection: a transport that dials but can't actually reach the
+// server (e.g. UDP that a firewall silently drops) fails here rather than
+// masquerading as "connected".
+func Dial(ctx context.Context, dialer transport.Dialer, endpoint string, static *noise.KeyPair, serverStatic, psk []byte) (*Link, error) {
+	conn, err := dialer.Dial(ctx, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	// The handshake reads from conn, which may block on a transport (e.g. UDP)
+	// that isn't context-aware. Close the conn if ctx is cancelled before the
+	// handshake finishes so a losing/aborted attempt can't hang. Once the
+	// handshake returns we stop the watcher, leaving a winning conn open.
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
+	l, err := Client(conn, static, serverStatic, psk)
+	close(done)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return l, nil
 }
 
 // Server performs the responder (server) side of the handshake over conn and

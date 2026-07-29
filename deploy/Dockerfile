@@ -1,5 +1,5 @@
 # Build the veil-server binary.
-FROM golang:1.22-alpine AS build
+FROM golang:1.23-alpine AS build
 WORKDIR /src
 COPY go.mod ./
 # (no external deps yet; go.sum added when they appear)
