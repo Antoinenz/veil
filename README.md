@@ -1,0 +1,78 @@
+# veil
+
+> **Status: early scaffolding (M0).** Not yet usable, not yet secure. Do not use for
+> anything real. See [ROADMAP](#roadmap).
+
+An open-source (MIT), **self-hostable VPN** designed to feel like Cloudflare WARP and
+Tailscale:
+
+- **One button.** Click *Connect* — the client auto-configures and finds the best working
+  transport on its own.
+- **Works on hostile networks.** When plain UDP VPNs are blocked/throttled, veil
+  automatically falls back through TCP → TLS → **WebSocket-over-TLS (WSS) on :443**, which
+  blends in with ordinary HTTPS web traffic.
+- **No client-side port forwarding.** Clients only ever dial *out* to the server.
+- **Easy to self-host.** A single server binary (or `docker compose up`) on a VPS with a
+  domain. Enrollment is one invite code.
+
+## Architecture (short version)
+
+```
+client  ──►  [ obfuscated transport ]  ──►  self-hosted gateway server  ──►  internet
+```
+
+- **Crypto core:** the tunnel handshake is built on the **Noise Protocol Framework** (the
+  same audited foundation WireGuard uses). We do **not** hand-roll ciphers.
+- **Custom protocol** for framing, transport negotiation, multiplexing, and obfuscation.
+- **Pluggable transports** (`udp`, `tcp`, `tls`, `wss`) selected automatically at connect
+  time by a "Happy-Eyeballs"-style racer, with health-checked failover and per-network memory.
+
+Full design lives in [`docs/`](docs/).
+
+> ⚠️ **Security:** the cryptographic protocol is custom (built on Noise). It has **not** been
+> audited. An independent review is required before any security-critical use.
+
+## Repo layout
+
+| Path | What |
+|------|------|
+| `cmd/veil` | client CLI + daemon |
+| `cmd/veil-server` | gateway + control plane |
+| `internal/transport` | transport interface + selector (udp/tcp/tls/wss) |
+| `internal/tunnel` | frame codec + TUN abstraction |
+| `internal/noise` | handshake / session crypto (Noise) |
+| `internal/config` | config loading |
+| `deploy` | Dockerfile, docker-compose, systemd units |
+| `docs` | protocol spec, threat model, self-hosting guide |
+
+## Build
+
+```sh
+make build        # builds ./bin/veil and ./bin/veil-server
+make test
+make vet
+```
+
+## Roadmap
+
+- [x] **M0** — scaffold, MIT license, config, core interfaces, CI
+- [x] **M1** — end-to-end encrypted tunnel, verified live on real hardware
+  - [x] real Noise `IK` handshake + session AEAD (`internal/noise`, on `flynn/noise`)
+  - [x] UDP transport: dialer + per-remote demuxing listener (`internal/transport`)
+  - [x] link layer: framed handshake + encrypted packet pump (`internal/link`)
+  - [x] virtual-IP pool allocator (`internal/ippool`)
+  - [x] Linux TUN device via `/dev/net/tun` (`internal/tun`)
+  - [x] NAT/forwarding/interface config helper (`internal/netcfg`)
+  - [x] daemon assembly: `veil-server run` gateway + `veil up` client
+        (`internal/server`, `internal/client`) — TUN ⇄ link ⇄ pool ⇄ NAT
+  - [x] **live tunnel verified**: `sudo bash deploy/scripts/e2e-netns.sh`
+        pings across the encrypted tunnel between two network namespaces
+- [ ] **M2** — multi-transport (TCP/TLS/WSS) + auto-selector with failover
+- [ ] **M3** — control plane (invite enrollment, device store, admin UI, DNS, kill-switch)
+- [ ] **M4** — Windows (Wintun, service, firewall) + tray GUI
+- [ ] **M5** — active-probing resistance (decoy site), autocert, one-line self-host, docs
+- [ ] **M6** — QUIC/HTTP3, mesh + NAT hole-punching + relay, mobile, OIDC
+
+## License
+
+MIT — see [LICENSE](LICENSE).

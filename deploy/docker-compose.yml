@@ -1,0 +1,31 @@
+# Self-host veil in one command.
+#
+#   1. Point a domain at this host (A/AAAA record).
+#   2. First run generates keys + prints your server fingerprint and invite code:
+#        docker compose run --rm veil-server init --domain vpn.example.com --data-dir /var/lib/veil
+#   3. Bring it up:
+#        docker compose up -d
+#
+# Requires TCP+UDP 443 reachable from the internet.
+services:
+  veil-server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: veilvpn/veil-server:dev
+    restart: unless-stopped
+    # NET_ADMIN is required to manage the TUN device, routing and NAT.
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    ports:
+      - "443:443/tcp"
+      - "443:443/udp"
+    volumes:
+      - veil-data:/var/lib/veil
+    sysctls:
+      - net.ipv4.ip_forward=1
+
+volumes:
+  veil-data:
