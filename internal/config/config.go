@@ -62,7 +62,10 @@ type ClientConfig struct {
 	TransportOrder []TransportName `json:"transport_order,omitempty"`
 	// HandshakeTimeout bounds each transport attempt during auto-selection.
 	HandshakeTimeout Duration `json:"handshake_timeout"`
-	// KillSwitch blocks all non-tunnel traffic while "connected" is engaged.
+	// FullTunnel routes all traffic through the server (default route + DNS),
+	// turning veil into a full VPN rather than just tunnel-network access.
+	FullTunnel bool `json:"full_tunnel"`
+	// KillSwitch (with FullTunnel) blocks non-tunnel traffic if the tunnel drops.
 	KillSwitch bool `json:"kill_switch"`
 	// DataDir holds the device key + cached per-network transport preference.
 	DataDir string `json:"data_dir"`

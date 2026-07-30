@@ -12,6 +12,7 @@ across the encrypted tunnel. Requires root (creates namespaces + TUN devices).
 make build
 sudo MODE=normal   bash deploy/scripts/e2e-netns.sh   # client selects udp
 sudo MODE=blockudp bash deploy/scripts/e2e-netns.sh   # UDP dropped -> auto-falls back to wss
+sudo MODE=full     bash deploy/scripts/e2e-netns.sh   # full-tunnel: reach a server-only IP
 ```
 
 `blockudp` proves the censorship-resistance path: with UDP dropped, the client
@@ -74,6 +75,20 @@ fingerprint `veil-server init` printed to detect a man-in-the-middle.
 | `tun: ... operation not permitted` | Run with `sudo` (needs `CAP_NET_ADMIN`). |
 | Ping to tunnel IP fails but connect succeeds | Check the `tunnel_cidr` doesn't collide with an existing route (Tailscale/`100.64`, Docker `172.x`, WireGuard `10.x`). |
 
-> Note: routing **all** internet traffic through the server (default route +
-> DNS + kill-switch) is a work-in-progress; today's client sets up the tunnel
-> network so you can reach the server and other veil clients.
+## Full-tunnel mode (route all traffic through the server)
+
+Add `--full` to send **all** traffic through the tunnel (a real VPN), with DNS
+pushed by the server and a kill-switch that fails closed if the tunnel drops:
+
+```bash
+sudo ./bin/veil up --data-dir /etc/veil --full            # kill-switch on by default
+sudo ./bin/veil up --data-dir /etc/veil --full --kill-switch=false
+```
+
+For internet egress the **server** must have `egress_interface` set (e.g.
+`"eth0"`) so it NATs client traffic out. Without it, full-tunnel still routes
+through the server but only reaches what the server itself can reach.
+
+> DNS handling replaces `/etc/resolv.conf` while connected and restores it on
+> exit. On systemd-resolved hosts this is best-effort; a resolver integration is
+> a later refinement.

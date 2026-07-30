@@ -120,6 +120,8 @@ func cmdLogin(args []string) error {
 func cmdUp(args []string) error {
 	fs := flag.NewFlagSet("veil up", flag.ContinueOnError)
 	dataDir := fs.String("data-dir", config.DefaultClient().DataDir, "client data directory")
+	full := fs.Bool("full", false, "route ALL traffic through the tunnel (full VPN: default route + DNS)")
+	killSwitch := fs.Bool("kill-switch", true, "with --full, block non-tunnel traffic if the tunnel drops")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -128,6 +130,10 @@ func cmdUp(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *full {
+		cfg.FullTunnel = true
+	}
+	cfg.KillSwitch = *killSwitch
 	if cfg.ServerPublicKey == "" {
 		return fmt.Errorf("no server public key in config; run `veil login --server-key ...` first")
 	}

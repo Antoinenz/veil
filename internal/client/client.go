@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -39,6 +40,11 @@ type Options struct {
 	// HandshakeTimeout bounds the whole auto-selection attempt.
 	HandshakeTimeout time.Duration
 
+	// FullTunnel routes all traffic through the server (default route + DNS).
+	FullTunnel bool
+	// KillSwitch (with FullTunnel) blocks non-tunnel egress if the tunnel drops.
+	KillSwitch bool
+
 	// Device is this client's static keypair.
 	Device *noise.KeyPair
 	// ServerStatic is the server's pinned static public key (32 bytes).
@@ -63,6 +69,8 @@ func FromConfig(cfg config.ClientConfig, device *noise.KeyPair, serverStatic []b
 		TLSPort:          orDefault(cfg.TLSPort, "443"),
 		Order:            order,
 		HandshakeTimeout: time.Duration(cfg.HandshakeTimeout),
+		FullTunnel:       cfg.FullTunnel,
+		KillSwitch:       cfg.KillSwitch,
 		Device:           device,
 		ServerStatic:     serverStatic,
 	}
@@ -103,6 +111,20 @@ func Run(ctx context.Context, opt Options) error {
 		return fmt.Errorf("configure %s: %w", dev.Name(), err)
 	}
 	log.Printf("veil: %s is %s, gateway %s (transport %s)", dev.Name(), nc.AssignedIP, nc.ServerIP, chosen)
+
+	if opt.FullTunnel {
+		serverIP, err := resolveHost(opt.ServerHost)
+		if err != nil {
+			return fmt.Errorf("full-tunnel: resolve server %q: %w", opt.ServerHost, err)
+		}
+		tr, err := netcfg.FullTunnelUp(dev.Name(), nc.ServerIP, serverIP, nc.DNS, opt.KillSwitch)
+		if err != nil {
+			return fmt.Errorf("full-tunnel setup: %w", err)
+		}
+		defer tr.Down()
+		log.Printf("veil: full-tunnel ON — all traffic via %s (dns %s, kill-switch %v)",
+			dev.Name(), nc.DNS, opt.KillSwitch)
+	}
 
 	errc := make(chan error, 2)
 	go func() { errc <- pumpTunToLink(dev, l) }()
@@ -204,6 +226,28 @@ func drainClose(results <-chan dialOutcome, winner *link.Link) {
 			_ = r.l.Close()
 		}
 	}
+}
+
+// resolveHost turns a host (IP or name) into an address, preferring IPv4.
+func resolveHost(host string) (netip.Addr, error) {
+	if a, err := netip.ParseAddr(host); err == nil {
+		return a, nil
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	for _, ip := range ips {
+		if v4 := ip.To4(); v4 != nil {
+			a, _ := netip.AddrFromSlice(v4)
+			return a, nil
+		}
+	}
+	if len(ips) > 0 {
+		a, _ := netip.AddrFromSlice(ips[0])
+		return a.Unmap(), nil
+	}
+	return netip.Addr{}, fmt.Errorf("no address for %s", host)
 }
 
 func orDefault(v, def string) string {

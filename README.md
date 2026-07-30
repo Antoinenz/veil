@@ -99,15 +99,18 @@ automated network-namespace test.
   - [x] **hostile-network fallback verified**: `sudo MODE=blockudp bash
         deploy/scripts/e2e-netns.sh` drops UDP → client auto-falls back to
         WSS/443 and the tunnel still works
-- [~] **M3** — control plane (enrollment done; DNS/kill-switch/full-tunnel next)
+- [x] **M3** — control plane + full VPN, verified live
   - [x] embedded device store (bbolt) — invites + enrolled keys (`internal/store`)
   - [x] **invite enrollment** over the HTTPS control plane: `veil login <host>
         <invite>` fetches & pins the server key automatically (no manual key)
   - [x] gateway **rejects un-enrolled devices**; admin CLI `veil-server
         invite` / `veil-server devices [--revoke]`
-  - [x] verified live (enroll → connect via udp/wss → rejection check) via
-        `deploy/scripts/e2e-netns.sh`
-  - [ ] full-tunnel default route + DNS push + kill-switch; admin web UI
+  - [x] **full-tunnel mode** (`veil up --full`): split-default route through the
+        tunnel, server-endpoint route pinning, DNS push, and a `--kill-switch`
+        (`internal/netcfg` `FullTunnelUp`/`Down`)
+  - [x] verified live via `deploy/scripts/e2e-netns.sh` (`MODE=normal|blockudp|full`):
+        enroll → connect (udp/wss) → ping/full-tunnel egress → un-enrolled rejected
+  - [ ] later: admin web UI, per-network transport memory persistence
 - [ ] **M4** — Windows (Wintun, service, firewall) + tray GUI
 - [ ] **M5** — active-probing resistance (decoy site), autocert, one-line self-host, docs
 - [ ] **M6** — QUIC/HTTP3, mesh + NAT hole-punching + relay, mobile, OIDC

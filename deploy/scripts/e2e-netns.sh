@@ -5,12 +5,14 @@
 #   client veil0 10.66.0.2  <== encrypted tunnel ==>  server veil0 10.66.0.1
 #
 # Exercises the full M1–M3 stack: invite enrollment over the HTTPS control
-# plane, transport auto-selection, and the encrypted tunnel.
+# plane, transport auto-selection, the encrypted tunnel, and full-tunnel routing.
 #
-#   MODE=normal   (default) UDP reachable   -> client picks udp
-#   MODE=blockudp           UDP dropped     -> client auto-falls back to wss
+#   MODE=normal   (default) UDP reachable -> client picks udp
+#   MODE=blockudp           UDP dropped   -> client auto-falls back to wss
+#   MODE=full               route ALL traffic through the tunnel; reach a
+#                           server-only IP to prove the default route + kill-switch
 #
-# Usage: sudo MODE=blockudp bash e2e-netns.sh   (must be root: netns + TUN)
+# Usage: sudo MODE=full bash e2e-netns.sh   (must be root: netns + TUN)
 set -euo pipefail
 
 MODE="${MODE:-normal}"
@@ -22,6 +24,7 @@ CLI2=/tmp/veil-e2e/cli2
 NS_S=veil-srv
 NS_C=veil-cli
 SRV_IP=10.55.0.1
+WAN_IP=198.51.100.1   # a "server-only" address, reachable only through the tunnel
 
 log() { echo -e "\n\033[1;36m>>> $*\033[0m"; }
 
@@ -31,6 +34,7 @@ cleanup() {
   pkill -f "$BINDIR/veil up"     2>/dev/null
   ip netns del "$NS_S" 2>/dev/null
   ip netns del "$NS_C" 2>/dev/null
+  rm -rf "/etc/netns/$NS_C" 2>/dev/null
 }
 trap cleanup EXIT
 
@@ -69,6 +73,16 @@ if [ "$MODE" = "blockudp" ]; then
   ip netns exec "$NS_S" iptables -A INPUT -p udp -j DROP
 fi
 
+if [ "$MODE" = "full" ]; then
+  log "Adding a server-only address $WAN_IP (reachable only via the tunnel)"
+  ip -n "$NS_S" link add dummy0 type dummy
+  ip -n "$NS_S" addr add "$WAN_IP/32" dev dummy0
+  ip -n "$NS_S" link set dummy0 up
+  # Isolate resolv.conf for the client netns so DNS changes never touch the host.
+  mkdir -p "/etc/netns/$NS_C"
+  echo 'nameserver 127.0.0.53' > "/etc/netns/$NS_C/resolv.conf"
+fi
+
 log "Starting server in $NS_S"
 ip netns exec "$NS_S" "$BINDIR/veil-server" run --config "$SRV/server.json" >/tmp/veil-e2e/srv.log 2>&1 &
 sleep 1.5
@@ -76,29 +90,45 @@ sleep 1.5
 log "Enrolling client over the HTTPS control plane (invite $INVITE)"
 ip netns exec "$NS_C" "$BINDIR/veil" login --data-dir "$CLI" "$SRV_IP" "$INVITE"
 
-log "Connecting client"
-ip netns exec "$NS_C" "$BINDIR/veil" up --data-dir "$CLI" >/tmp/veil-e2e/cli.log 2>&1 &
+UPARGS=""
+[ "$MODE" = "full" ] && UPARGS="--full --kill-switch"
+log "Connecting client ($BINDIR/veil up $UPARGS)"
+ip netns exec "$NS_C" "$BINDIR/veil" up --data-dir "$CLI" $UPARGS >/tmp/veil-e2e/cli.log 2>&1 &
 sleep 4
 
 log "Server log:"; sed 's/^/  [srv] /' /tmp/veil-e2e/srv.log || true
 log "Client log:"; sed 's/^/  [cli] /' /tmp/veil-e2e/cli.log || true
 CHOSEN="$(grep -o 'connected via [a-z]*' /tmp/veil-e2e/cli.log | head -1 | awk '{print $3}')"
 
-log "PING across the tunnel: client 10.66.0.2 -> server 10.66.0.1"
-if ! ip netns exec "$NS_C" ping -c 3 -W 2 10.66.0.1; then
+TARGET=10.66.0.1
+[ "$MODE" = "full" ] && TARGET=$WAN_IP
+
+if [ "$MODE" = "full" ]; then
+  log "Client routing table (expect 0.0.0.0/1 + 128.0.0.0/1 via the tunnel):"
+  ip netns exec "$NS_C" ip route | sed 's/^/  /'
+fi
+
+log "PING $TARGET (MODE=$MODE)"
+if ! ip netns exec "$NS_C" ping -c 3 -W 2 "$TARGET"; then
   log "RESULT: ❌ ping failed — see logs above"; exit 1
 fi
-log "RESULT: ✅ TUNNEL WORKS over '${CHOSEN}' (MODE=$MODE)"
+if [ "$MODE" = "full" ]; then
+  log "RESULT: ✅ FULL-TUNNEL WORKS — reached server-only $WAN_IP through the tunnel (kill-switch on)"
+else
+  log "RESULT: ✅ TUNNEL WORKS over '${CHOSEN}' (MODE=$MODE)"
+fi
 if [ "$MODE" = "blockudp" ] && [ "$CHOSEN" != "wss" ]; then
   log "WARNING: expected wss fallback but got '${CHOSEN}'"; exit 2
 fi
 
-# --- enforcement: an un-enrolled device must be refused ---------------------
-log "Enrollment enforcement: a device that never enrolled must be REJECTED"
-ip netns exec "$NS_C" "$BINDIR/veil" login --data-dir "$CLI2" --server-key "$SRVPUB" "$SRV_IP" bogus-invite >/dev/null
-if ip netns exec "$NS_C" timeout 8 "$BINDIR/veil" up --data-dir "$CLI2" >/tmp/veil-e2e/cli2.log 2>&1; then
-  log "RESULT: ❌ un-enrolled device was allowed to connect (should be rejected)"; exit 3
-else
-  log "RESULT: ✅ un-enrolled device correctly rejected"
+# --- enforcement: an un-enrolled device must be refused (skip in full mode) --
+if [ "$MODE" != "full" ]; then
+  log "Enrollment enforcement: a device that never enrolled must be REJECTED"
+  ip netns exec "$NS_C" "$BINDIR/veil" login --data-dir "$CLI2" --server-key "$SRVPUB" "$SRV_IP" bogus >/dev/null
+  if ip netns exec "$NS_C" timeout 8 "$BINDIR/veil" up --data-dir "$CLI2" >/tmp/veil-e2e/cli2.log 2>&1; then
+    log "RESULT: ❌ un-enrolled device was allowed (should be rejected)"; exit 3
+  else
+    log "RESULT: ✅ un-enrolled device correctly rejected"
+  fi
 fi
 exit 0
