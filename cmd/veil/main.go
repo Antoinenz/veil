@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/veilvpn/veil/internal/client"
 	"github.com/veilvpn/veil/internal/config"
@@ -91,16 +92,28 @@ func cmdLogin(args []string) error {
 	if err := os.WriteFile(keyPath, kp.Private.Bytes(), 0o600); err != nil {
 		return fmt.Errorf("write device key: %w", err)
 	}
+	fmt.Printf("device key generated: %s\n", noise.Fingerprint(kp.Public))
+
+	if *serverKey == "" {
+		// Enroll over the HTTPS control plane to fetch and pin the server key.
+		devicePub := base64.StdEncoding.EncodeToString(kp.Public.Bytes())
+		name, _ := os.Hostname()
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		er, err := client.Enroll(ctx, server, cfg.TLSPort, invite, devicePub, name)
+		if err != nil {
+			return err
+		}
+		cfg.ServerPublicKey = er.ServerPublicKey
+		cfg.ServerKeyFingerprint = er.Fingerprint
+		fmt.Printf("enrolled with %s\n", server)
+		fmt.Printf("server fingerprint: %s  (compare with `veil-server init` output)\n", er.Fingerprint)
+	}
+
 	if err := config.Save(filepath.Join(cfg.DataDir, "client.json"), cfg); err != nil {
 		return err
 	}
-
-	fmt.Printf("device key generated: %s\n", noise.Fingerprint(kp.Public))
-	fmt.Printf("saved config for %s (invite %s)\n", server, invite)
-	if *serverKey == "" {
-		fmt.Println("note: no --server-key set; automatic enrollment lands in M3. " +
-			"Provide the server's public key to connect now.")
-	}
+	fmt.Printf("saved config for %s\n", server)
 	return nil
 }
 

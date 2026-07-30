@@ -7,7 +7,9 @@ package server
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"log"
+	"net/http"
 	"net/netip"
 	"sync"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/veilvpn/veil/internal/link"
 	"github.com/veilvpn/veil/internal/netcfg"
 	"github.com/veilvpn/veil/internal/noise"
+	"github.com/veilvpn/veil/internal/store"
 	"github.com/veilvpn/veil/internal/transport"
 	"github.com/veilvpn/veil/internal/tun"
 )
@@ -29,28 +32,34 @@ const DefaultMTU = 1380
 type Server struct {
 	cfg   config.ServerConfig
 	kp    *noise.KeyPair
+	store *store.Store
 	pool  *ippool.Pool
 	dev   tun.Device
 	nc    netcfg.Configurator
 	ifOK  bool // whether NAT was installed (for cleanup)
 	iface string
 
+	fingerprint string
+
 	mu     sync.RWMutex
 	routes map[netip.Addr]*link.Link
 }
 
-// New builds a Server from config and the server's static keypair.
-func New(cfg config.ServerConfig, kp *noise.KeyPair) (*Server, error) {
+// New builds a Server from config, the server's static keypair, and the device
+// store (which holds enrollment invites and enrolled device keys).
+func New(cfg config.ServerConfig, kp *noise.KeyPair, st *store.Store) (*Server, error) {
 	pool, err := ippool.New(cfg.TunnelCIDR)
 	if err != nil {
 		return nil, err
 	}
 	return &Server{
-		cfg:    cfg,
-		kp:     kp,
-		pool:   pool,
-		nc:     netcfg.New(),
-		routes: make(map[netip.Addr]*link.Link),
+		cfg:         cfg,
+		kp:          kp,
+		store:       st,
+		pool:        pool,
+		nc:          netcfg.New(),
+		fingerprint: noise.Fingerprint(kp.Public),
+		routes:      make(map[netip.Addr]*link.Link),
 	}, nil
 }
 
@@ -87,7 +96,12 @@ func (s *Server) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	wssLis, err := transport.ListenWSS(s.cfg.ListenTLS, cert, nil)
+	// Control plane + decoy share the HTTPS listener: /enroll handles device
+	// enrollment, everything else (except the tunnel's own /veil) is the decoy.
+	controlMux := http.NewServeMux()
+	controlMux.HandleFunc(control.EnrollPath, s.handleEnroll)
+	controlMux.Handle("/", transport.DecoyHandler())
+	wssLis, err := transport.ListenWSS(s.cfg.ListenTLS, cert, controlMux)
 	if err != nil {
 		udpLis.Close()
 		return err
@@ -150,6 +164,14 @@ func (s *Server) handleConn(conn transport.Conn) {
 	}
 
 	key := base64.StdEncoding.EncodeToString(l.Peer())
+
+	// Only enrolled devices may establish a tunnel.
+	if enrolled, err := s.store.HasDevice(key); err != nil || !enrolled {
+		log.Printf("veil-server: rejecting unenrolled device %s…", short(key))
+		_ = l.Close()
+		return
+	}
+
 	ip, err := s.pool.AllocateFor(key)
 	if err != nil {
 		log.Printf("veil-server: address allocation failed: %v", err)
@@ -228,6 +250,58 @@ func (s *Server) drop(ip netip.Addr) {
 		_ = l.Close()
 	}
 	s.pool.Release(ip)
+}
+
+// handleEnroll validates an invite and enrolls the presented device key,
+// returning the server's static public key so the client can connect.
+func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req control.EnrollRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if req.Invite == "" || req.DevicePublicKey == "" {
+		http.Error(w, "invite and device_public_key required", http.StatusBadRequest)
+		return
+	}
+	// Validate the device key is a real 32-byte X25519 key before storing it.
+	raw, err := base64.StdEncoding.DecodeString(req.DevicePublicKey)
+	if err != nil || len(raw) != 32 {
+		http.Error(w, "invalid device_public_key", http.StatusBadRequest)
+		return
+	}
+
+	ok, err := s.store.ConsumeInvite(req.Invite)
+	if err != nil {
+		http.Error(w, "server error", http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		http.Error(w, "invalid or used invite", http.StatusForbidden)
+		return
+	}
+	if err := s.store.AddDevice(req.DevicePublicKey, req.Name); err != nil {
+		http.Error(w, "server error", http.StatusInternalServerError)
+		return
+	}
+	log.Printf("veil-server: enrolled device %s… (%q)", short(req.DevicePublicKey), req.Name)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(control.EnrollResponse{
+		ServerPublicKey: base64.StdEncoding.EncodeToString(s.kp.Public.Bytes()),
+		Fingerprint:     s.fingerprint,
+	})
+}
+
+func short(s string) string {
+	if len(s) <= 8 {
+		return s
+	}
+	return s[:8]
 }
 
 func parseAddr(s string) netip.Addr {

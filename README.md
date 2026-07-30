@@ -41,17 +41,40 @@ Full design lives in [`docs/`](docs/).
 | `internal/transport` | transport interface + selector (udp/tcp/tls/wss) |
 | `internal/tunnel` | frame codec + TUN abstraction |
 | `internal/noise` | handshake / session crypto (Noise) |
+| `internal/link` | ties crypto + framing + transport into a tunnel |
+| `internal/server` / `internal/client` | gateway + client data planes |
+| `internal/store` | embedded device/invite store (bbolt) |
+| `internal/control` | enrollment + net-config messages |
+| `internal/ippool` / `internal/tun` / `internal/netcfg` | IP pool, TUN device, host net config |
 | `internal/config` | config loading |
 | `deploy` | Dockerfile, docker-compose, systemd units |
 | `docs` | protocol spec, threat model, self-hosting guide |
 
 ## Build
 
+Requires **Go ≥ 1.23**.
+
 ```sh
-make build        # builds ./bin/veil and ./bin/veil-server
+make build          # builds ./bin/veil and ./bin/veil-server
 make test
 make vet
+sudo make install   # optional: copy binaries to /usr/local/bin
 ```
+
+## Quick start (self-host)
+
+```sh
+# on the server (a VPS or home box):
+sudo ./bin/veil-server init --domain <host-or-ip> --data-dir /etc/veil   # prints an invite
+sudo ./bin/veil-server run  --config /etc/veil/server.json
+
+# on a client (Linux; Windows/Wintun is M4):
+sudo ./bin/veil login --data-dir /etc/veil <host-or-ip> <invite>         # enrolls + pins server key
+sudo ./bin/veil up    --data-dir /etc/veil
+```
+
+See [`docs/testing.md`](docs/testing.md) for a full two-machine walkthrough and the
+automated network-namespace test.
 
 ## Roadmap
 
@@ -76,7 +99,15 @@ make vet
   - [x] **hostile-network fallback verified**: `sudo MODE=blockudp bash
         deploy/scripts/e2e-netns.sh` drops UDP → client auto-falls back to
         WSS/443 and the tunnel still works
-- [ ] **M3** — control plane (invite enrollment, device store, admin UI, DNS, kill-switch)
+- [~] **M3** — control plane (enrollment done; DNS/kill-switch/full-tunnel next)
+  - [x] embedded device store (bbolt) — invites + enrolled keys (`internal/store`)
+  - [x] **invite enrollment** over the HTTPS control plane: `veil login <host>
+        <invite>` fetches & pins the server key automatically (no manual key)
+  - [x] gateway **rejects un-enrolled devices**; admin CLI `veil-server
+        invite` / `veil-server devices [--revoke]`
+  - [x] verified live (enroll → connect via udp/wss → rejection check) via
+        `deploy/scripts/e2e-netns.sh`
+  - [ ] full-tunnel default route + DNS push + kill-switch; admin web UI
 - [ ] **M4** — Windows (Wintun, service, firewall) + tray GUI
 - [ ] **M5** — active-probing resistance (decoy site), autocert, one-line self-host, docs
 - [ ] **M6** — QUIC/HTTP3, mesh + NAT hole-punching + relay, mobile, OIDC

@@ -21,13 +21,16 @@ import (
 	"github.com/veilvpn/veil/internal/config"
 	"github.com/veilvpn/veil/internal/noise"
 	"github.com/veilvpn/veil/internal/server"
+	"github.com/veilvpn/veil/internal/store"
 )
 
 const usage = `veil-server — self-hostable VPN gateway
 
 usage:
-  veil-server init   --domain <host> [--data-dir <dir>]   generate keys + config, print fingerprint & invite
-  veil-server run    [--config <file>]                     run the gateway (M1+)
+  veil-server init    --domain <host> [--data-dir <dir>]   generate keys + config, print fingerprint & invite
+  veil-server run     [--config <file>]                     run the gateway
+  veil-server invite  [--data-dir <dir>]                    mint a new single-use enrollment invite
+  veil-server devices [--data-dir <dir>] [--revoke <key>]   list or revoke enrolled devices
   veil-server version
 
 `
@@ -43,6 +46,10 @@ func main() {
 		err = cmdInit(os.Args[2:])
 	case "run":
 		err = cmdRun(os.Args[2:])
+	case "invite":
+		err = cmdInvite(os.Args[2:])
+	case "devices":
+		err = cmdDevices(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println(version())
 	case "help", "-h", "--help":
@@ -94,10 +101,14 @@ func cmdInit(args []string) error {
 		return err
 	}
 
+	st, err := store.Open(filepath.Join(*dataDir, "veil.db"))
+	if err != nil {
+		return err
+	}
+	defer st.Close()
 	invite := newInvite()
-	invPath := filepath.Join(*dataDir, "invites.txt")
-	if err := os.WriteFile(invPath, []byte(invite+"\n"), 0o600); err != nil {
-		return fmt.Errorf("write invite: %w", err)
+	if err := st.CreateInvite(invite); err != nil {
+		return fmt.Errorf("store invite: %w", err)
 	}
 
 	fmt.Printf(`veil-server initialized.
@@ -145,7 +156,13 @@ func cmdRun(args []string) error {
 		return err
 	}
 
-	srv, err := server.New(cfg, kp)
+	st, err := store.Open(filepath.Join(cfg.DataDir, "veil.db"))
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	srv, err := server.New(cfg, kp, st)
 	if err != nil {
 		return err
 	}
@@ -153,6 +170,68 @@ func cmdRun(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return srv.Run(ctx)
+}
+
+func cmdInvite(args []string) error {
+	fs := newFlagSet("invite")
+	dataDir := fs.String("data-dir", "/var/lib/veil", "server data directory")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	st, err := store.Open(filepath.Join(*dataDir, "veil.db"))
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	invite := newInvite()
+	if err := st.CreateInvite(invite); err != nil {
+		return err
+	}
+	fmt.Printf("new invite: %s\n", invite)
+	return nil
+}
+
+func cmdDevices(args []string) error {
+	fs := newFlagSet("devices")
+	dataDir := fs.String("data-dir", "/var/lib/veil", "server data directory")
+	revoke := fs.String("revoke", "", "revoke the device with this base64 public key")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	st, err := store.Open(filepath.Join(*dataDir, "veil.db"))
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	if *revoke != "" {
+		ok, err := st.RevokeDevice(*revoke)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("no such device: %s", *revoke)
+		}
+		fmt.Printf("revoked %s\n", *revoke)
+		return nil
+	}
+
+	devices, err := st.ListDevices()
+	if err != nil {
+		return err
+	}
+	if len(devices) == 0 {
+		fmt.Println("no enrolled devices")
+		return nil
+	}
+	for _, d := range devices {
+		name := d.Name
+		if name == "" {
+			name = "-"
+		}
+		fmt.Printf("%s  %-16s  enrolled %s\n", d.PublicKey, name, d.EnrolledAt.Format("2006-01-02 15:04"))
+	}
+	return nil
 }
 
 // newInvite returns a random, human-typeable one-time enrollment code.

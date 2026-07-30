@@ -187,6 +187,10 @@ func (l *WSSListener) Close() error {
 // Addr returns the local listen address.
 func (l *WSSListener) Addr() net.Addr { return l.ln.Addr() }
 
+// DecoyHandler returns the built-in decoy site handler, so callers composing
+// their own routes (e.g. a control-plane mux) can serve it at "/".
+func DecoyHandler() http.Handler { return http.HandlerFunc(defaultDecoy) }
+
 // defaultDecoy serves an innocuous page so that probing the server's root looks
 // like an ordinary website rather than a VPN endpoint.
 func defaultDecoy(w http.ResponseWriter, r *http.Request) {
