@@ -7,11 +7,13 @@ Wants=network-online.target
 [Service]
 Type=simple
 # Enroll first: `sudo veil login --data-dir /etc/veil <host> <invite>`.
-# Add --full for a full-tunnel VPN (all traffic through the server).
-ExecStart=/usr/local/bin/veil up --data-dir /etc/veil
+# Runs the background daemon; connect with `veil ctl connect [--full]` or the GUI.
+ExecStart=/usr/local/bin/veil daemon --data-dir /etc/veil
 Restart=on-failure
 RestartSec=3
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+# Creates /run/veil for the control socket.
+RuntimeDirectory=veil
 ReadWritePaths=/etc/veil
 
 [Install]

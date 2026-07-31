@@ -124,8 +124,16 @@ automated network-namespace test.
   - [x] Windows netcfg via `netsh` (IP + MTU); **split-tunnel `veil up` works**
   - [x] CI builds a ready-to-run `veil.exe` + `wintun.dll` artifact (Actions)
   - [ ] full-tunnel routing/DNS on Windows; Windows service; firewall kill-switch
-- [ ] **M7 — GUI**: cross-platform tray app (one-button connect) talking to the
-      daemon over local IPC; status + server picker
+- [~] **M7 — GUI + daemon**
+  - [x] privileged **daemon + local IPC** (unix socket / named pipe); unprivileged
+        control (`internal/daemon`, `internal/ipc`) — `veil daemon`,
+        `veil ctl connect|disconnect|status`
+  - [x] tunnel **Engine** with ordered shutdown (`internal/client/engine.go`) —
+        **fixes the Windows use-after-close crash**; adapter renamed **"Veil"**
+  - [x] **Fyne desktop app** (`cmd/veil-gui`): one-button Connect + live status
+  - [x] CI builds Windows (`veil.exe`+`veil-gui.exe`+`wintun.dll`) and Linux GUI artifacts
+  - [x] daemon lifecycle verified live: `sudo MODE=daemon bash deploy/scripts/e2e-netns.sh`
+        (connect→ping→disconnect→**reconnect**)
 - [x] **M5** — hardening + packaging, verified live
   - [x] **Let's Encrypt autocert** for real domains, self-signed fallback for
         IP/dev (`internal/certutil` `ServerTLSConfig`)

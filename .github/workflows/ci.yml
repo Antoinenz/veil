@@ -71,20 +71,32 @@ jobs:
         run: go test ./...
       - name: build veil.exe
         run: go build -ldflags "-s -w" -o dist/veil.exe ./cmd/veil
-      - name: fetch wintun.dll (amd64)
+      - name: build veil-gui.exe (Fyne, cgo)
+        env:
+          CGO_ENABLED: '1'
+        run: go build -ldflags "-s -w -H windowsgui" -o dist/veil-gui.exe ./cmd/veil-gui
+      - name: fetch wintun.dll + write README
         shell: pwsh
         run: |
           Invoke-WebRequest -Uri https://www.wintun.net/builds/wintun-0.14.1.zip -OutFile wintun.zip
           Expand-Archive wintun.zip -DestinationPath wt
           Copy-Item wt/wintun/bin/amd64/wintun.dll dist/wintun.dll
           @"
-          veil — Windows client
+          Veil — Windows
 
-          1. Keep veil.exe and wintun.dll together in this folder.
-          2. Open PowerShell **as Administrator** in this folder.
-          3. Enroll:  .\veil.exe login --data-dir C:\veil <server-host> <invite>
-          4. Connect: .\veil.exe up --data-dir C:\veil
-             (--full is not supported on Windows yet; split-tunnel works)
+          Files: veil.exe (CLI + daemon), veil-gui.exe (app), wintun.dll (keep together).
+
+          One-time enroll (PowerShell as Administrator):
+            .\veil.exe login --data-dir C:\veil <server-host> <invite>
+
+          Run the background service (Administrator):
+            sc create Veil binPath= "`"$PWD\veil.exe`" daemon --data-dir C:\veil" start= auto
+            sc start Veil
+          (or just run  .\veil.exe daemon --data-dir C:\veil  in an admin window)
+
+          Then launch veil-gui.exe and click Connect.
+          CLI alternative:  .\veil.exe ctl connect | status | disconnect
+          Note: --full (route all traffic) is not yet supported on Windows.
 
           wintun.dll is from https://www.wintun.net (WireGuard project), bundled for convenience.
           "@ | Out-File -Encoding utf8 dist/README.txt
@@ -92,4 +104,30 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: veil-windows-amd64
+          path: dist/
+
+  linux-gui:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+      - name: install Fyne build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev libxxf86vm-dev libxkbcommon-dev
+      - name: build binaries
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          go build -ldflags "-s -w" -o dist/veil ./cmd/veil
+          go build -ldflags "-s -w" -o dist/veil-server ./cmd/veil-server
+          go build -ldflags "-s -w" -o dist/veil-gui ./cmd/veil-gui
+      - name: upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: veil-linux-amd64
           path: dist/

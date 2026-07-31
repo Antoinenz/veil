@@ -85,6 +85,24 @@ Notes:
   (reach the veil network + server + other peers) works today; full-tunnel is a
   follow-up so route/DNS changes can be validated before shipping.
 
+## GUI + daemon
+
+veil splits into a privileged **daemon** (holds the tunnel) and an unprivileged
+**GUI/CLI** that controls it over a local socket / named pipe.
+
+```bash
+# privileged service (Linux: run as root, or `systemctl enable --now veil`):
+sudo veil daemon --data-dir /etc/veil
+# control it (unprivileged):
+veil ctl connect [--full]
+veil ctl status
+veil ctl disconnect
+# or launch the desktop app:
+veil-gui
+```
+
+On **Windows**: run the daemon as a service (`sc create Veil binPath= "...veil.exe daemon --data-dir C:\veil" start= auto` then `sc start Veil`) or in an Administrator window, then launch `veil-gui.exe` and click **Connect**. Binaries come from the CI `veil-windows-amd64` artifact (`veil.exe`, `veil-gui.exe`, `wintun.dll`).
+
 ## Troubleshooting
 
 | Symptom | Fix |
