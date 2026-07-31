@@ -16,3 +16,6 @@ config.local.*
 .DS_Store
 .idea/
 .vscode/
+
+# stray build logs
+*.log
