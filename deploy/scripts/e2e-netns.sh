@@ -90,6 +90,26 @@ sleep 1.5
 log "Enrolling client over the HTTPS control plane (invite $INVITE)"
 ip netns exec "$NS_C" "$BINDIR/veil" login --data-dir "$CLI" "$SRV_IP" "$INVITE"
 
+if [ "$MODE" = "daemon" ]; then
+  export VEIL_IPC=/tmp/veil-e2e/veil.sock
+  ctl() { ip netns exec "$NS_C" env VEIL_IPC="$VEIL_IPC" "$BINDIR/veil" ctl "$@"; }
+  log "Starting veil daemon in $NS_C"
+  ip netns exec "$NS_C" env VEIL_IPC="$VEIL_IPC" "$BINDIR/veil" daemon --data-dir "$CLI" >/tmp/veil-e2e/cli.log 2>&1 &
+  sleep 1
+  log "ctl status (expect disconnected)"; ctl status
+  log "ctl connect"; ctl connect
+  log "ping via daemon tunnel"
+  ip netns exec "$NS_C" ping -c 2 -W 2 10.66.0.1 || { log "❌ ping failed after connect"; exit 1; }
+  log "ctl disconnect"; ctl disconnect
+  sleep 1
+  log "RECONNECT (crash-fix regression): ctl connect"; ctl connect
+  ip netns exec "$NS_C" ping -c 2 -W 2 10.66.0.1 || { log "❌ ping failed after reconnect"; exit 1; }
+  ctl disconnect
+  log "daemon log:"; sed 's/^/  [cli] /' /tmp/veil-e2e/cli.log
+  log "RESULT: ✅ DAEMON lifecycle OK — connect/status/ping/disconnect/RECONNECT"
+  exit 0
+fi
+
 UPARGS=""
 [ "$MODE" = "full" ] && UPARGS="--full --kill-switch"
 log "Connecting client ($BINDIR/veil up $UPARGS)"

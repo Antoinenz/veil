@@ -7,18 +7,24 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/veilvpn/veil/internal/client"
 	"github.com/veilvpn/veil/internal/config"
+	"github.com/veilvpn/veil/internal/daemon"
+	"github.com/veilvpn/veil/internal/ipc"
 	"github.com/veilvpn/veil/internal/noise"
 )
 
@@ -26,9 +32,12 @@ const usage = `veil — one-button self-hostable VPN client
 
 usage:
   veil login <server> <invite>   enroll this device with a gateway
-  veil up                        connect (auto-selects the best transport)
-  veil down                      disconnect
-  veil status                    show connection state
+  veil up [--full]               connect in the foreground (auto-selects transport)
+  veil daemon                    run the background control service (for the GUI/ctl)
+  veil ctl connect [--full]      tell the daemon to connect
+  veil ctl disconnect            tell the daemon to disconnect
+  veil ctl status                show the daemon's connection state
+  veil status | down             shortcuts for ctl status | disconnect
   veil version
 
 `
@@ -44,10 +53,14 @@ func main() {
 		err = cmdLogin(os.Args[2:])
 	case "up":
 		err = cmdUp(os.Args[2:])
+	case "daemon":
+		err = cmdDaemon(os.Args[2:])
+	case "ctl":
+		err = cmdCtl(os.Args[2:])
 	case "down":
-		err = cmdDown(os.Args[2:])
+		err = ctlPost("/v1/disconnect", nil)
 	case "status":
-		err = cmdStatus(os.Args[2:])
+		err = ctlStatus()
 	case "version", "--version", "-v":
 		fmt.Println(version())
 	case "help", "-h", "--help":
@@ -118,6 +131,33 @@ func cmdLogin(args []string) error {
 	return nil
 }
 
+// loadOptions loads the client config + device key from dataDir and builds the
+// connection options, applying the full-tunnel / kill-switch flags.
+func loadOptions(dataDir string, full, killSwitch bool) (client.Options, error) {
+	cfg, err := config.LoadClient(filepath.Join(dataDir, "client.json"))
+	if err != nil {
+		return client.Options{}, err
+	}
+	cfg.FullTunnel = cfg.FullTunnel || full
+	cfg.KillSwitch = killSwitch
+	if cfg.ServerPublicKey == "" {
+		return client.Options{}, fmt.Errorf("no server public key in config; run `veil login` first")
+	}
+	serverStatic, err := base64.StdEncoding.DecodeString(cfg.ServerPublicKey)
+	if err != nil {
+		return client.Options{}, fmt.Errorf("decode server public key: %w", err)
+	}
+	keyBytes, err := os.ReadFile(filepath.Join(dataDir, "device.key"))
+	if err != nil {
+		return client.Options{}, fmt.Errorf("read device key: %w", err)
+	}
+	device, err := noise.LoadKeyPair(keyBytes)
+	if err != nil {
+		return client.Options{}, err
+	}
+	return client.FromConfig(cfg, device, serverStatic), nil
+}
+
 func cmdUp(args []string) error {
 	fs := flag.NewFlagSet("veil up", flag.ContinueOnError)
 	dataDir := fs.String("data-dir", config.DefaultClient().DataDir, "client data directory")
@@ -126,44 +166,139 @@ func cmdUp(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-
-	cfg, err := config.LoadClient(filepath.Join(*dataDir, "client.json"))
+	opt, err := loadOptions(*dataDir, *full, *killSwitch)
 	if err != nil {
 		return err
 	}
-	if *full {
-		cfg.FullTunnel = true
-	}
-	cfg.KillSwitch = *killSwitch
-	if cfg.ServerPublicKey == "" {
-		return fmt.Errorf("no server public key in config; run `veil login --server-key ...` first")
-	}
-	serverStatic, err := base64.StdEncoding.DecodeString(cfg.ServerPublicKey)
-	if err != nil {
-		return fmt.Errorf("decode server public key: %w", err)
-	}
-	keyBytes, err := os.ReadFile(filepath.Join(*dataDir, "device.key"))
-	if err != nil {
-		return fmt.Errorf("read device key: %w", err)
-	}
-	device, err := noise.LoadKeyPair(keyBytes)
-	if err != nil {
-		return err
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return client.Run(ctx, client.FromConfig(cfg, device, serverStatic))
+	return client.Run(ctx, opt)
 }
 
-func cmdDown(args []string) error {
-	// The M1 client is foreground (Ctrl-C to disconnect). A background daemon
-	// with IPC control lands with the service work in M4.
-	fmt.Println("down: the M1 client runs in the foreground — stop it with Ctrl-C")
+func cmdDaemon(args []string) error {
+	fs := flag.NewFlagSet("veil daemon", flag.ContinueOnError)
+	dataDir := fs.String("data-dir", config.DefaultClient().DataDir, "client data directory")
+	killSwitch := fs.Bool("kill-switch", true, "with full-tunnel, block non-tunnel traffic if the tunnel drops")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	opt, err := loadOptions(*dataDir, false, *killSwitch)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return daemon.New(opt).Serve(ctx)
+}
+
+func cmdCtl(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: veil ctl connect [--full] | disconnect | status")
+	}
+	switch args[0] {
+	case "status":
+		return ctlStatus()
+	case "disconnect":
+		return ctlPost("/v1/disconnect", nil)
+	case "connect":
+		fs := flag.NewFlagSet("veil ctl connect", flag.ContinueOnError)
+		full := fs.Bool("full", false, "route all traffic through the tunnel")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		return ctlConnect(*full)
+	default:
+		return fmt.Errorf("unknown ctl command %q", args[0])
+	}
+}
+
+func daemonErr(err error) error {
+	return fmt.Errorf("cannot reach the veil daemon (is `sudo veil daemon` running?): %w", err)
+}
+
+func fetchStatus() (client.Status, error) {
+	resp, err := ipc.HTTPClient().Get(ipc.Host + "/v1/status")
+	if err != nil {
+		return client.Status{}, daemonErr(err)
+	}
+	defer resp.Body.Close()
+	var st client.Status
+	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+		return client.Status{}, err
+	}
+	return st, nil
+}
+
+func ctlStatus() error {
+	st, err := fetchStatus()
+	if err != nil {
+		return err
+	}
+	printStatus(st)
 	return nil
 }
 
-func cmdStatus(args []string) error {
-	fmt.Println("status: the M1 client runs in the foreground; see the `veil up` process")
+func ctlPost(path string, body any) error {
+	var buf io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		buf = bytes.NewReader(b)
+	}
+	resp, err := ipc.HTTPClient().Post(ipc.Host+path, "application/json", buf)
+	if err != nil {
+		return daemonErr(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("daemon returned %s: %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	var st client.Status
+	if json.NewDecoder(resp.Body).Decode(&st) == nil {
+		printStatus(st)
+	}
 	return nil
+}
+
+func ctlConnect(full bool) error {
+	if err := ctlPost("/v1/connect", daemon.ConnectRequest{Full: full}); err != nil {
+		return err
+	}
+	// Poll until the state leaves "connecting".
+	deadline := time.Now().Add(25 * time.Second)
+	for time.Now().Before(deadline) {
+		st, err := fetchStatus()
+		if err != nil {
+			return err
+		}
+		if st.State != client.StateConnecting {
+			printStatus(st)
+			if st.State == client.StateDisconnected && st.Err != "" {
+				return fmt.Errorf("%s", st.Err)
+			}
+			return nil
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	return fmt.Errorf("timed out waiting to connect")
+}
+
+func printStatus(st client.Status) {
+	line := "state: " + string(st.State)
+	if st.Transport != "" {
+		line += "  transport: " + st.Transport
+	}
+	if st.AssignedIP != "" {
+		line += "  ip: " + st.AssignedIP
+	}
+	if st.Server != "" {
+		line += "  server: " + st.Server
+	}
+	if st.FullTunnel {
+		line += "  [full-tunnel]"
+	}
+	fmt.Println(line)
+	if st.Err != "" {
+		fmt.Println("error:", st.Err)
+	}
 }

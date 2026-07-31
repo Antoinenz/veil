@@ -11,6 +11,10 @@ import "errors"
 // ErrUnsupported is returned by Open on platforms without a TUN implementation.
 var ErrUnsupported = errors.New("tun: not supported on this platform yet")
 
+// DefaultName is the default adapter/interface name per platform. On Windows it
+// is user-visible (Network Connections / Task Manager), so it is capitalized.
+var DefaultName = defaultName
+
 // Device is a TUN network interface.
 type Device interface {
 	// Read fills p with one inbound IP packet and returns its length.

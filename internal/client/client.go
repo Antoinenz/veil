@@ -7,16 +7,13 @@ package client
 import (
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"net/netip"
 	"sync"
 	"time"
 
 	"github.com/veilvpn/veil/internal/config"
-	"github.com/veilvpn/veil/internal/control"
 	"github.com/veilvpn/veil/internal/link"
-	"github.com/veilvpn/veil/internal/netcfg"
 	"github.com/veilvpn/veil/internal/noise"
 	"github.com/veilvpn/veil/internal/transport"
 	"github.com/veilvpn/veil/internal/tun"
@@ -76,68 +73,6 @@ func FromConfig(cfg config.ClientConfig, device *noise.KeyPair, serverStatic []b
 		KillSwitch:       cfg.KillSwitch,
 		Device:           device,
 		ServerStatic:     serverStatic,
-	}
-}
-
-// Run connects and blocks until ctx is cancelled or the tunnel fails.
-func Run(ctx context.Context, opt Options) error {
-	if opt.HandshakeTimeout <= 0 {
-		opt.HandshakeTimeout = 8 * time.Second
-	}
-	connCtx, cancel := context.WithTimeout(ctx, opt.HandshakeTimeout)
-	defer cancel()
-
-	l, chosen, err := connect(connCtx, opt)
-	if err != nil {
-		return fmt.Errorf("could not establish tunnel: %w", err)
-	}
-	defer l.Close()
-	log.Printf("veil: connected via %s", chosen)
-
-	raw, err := l.RecvConfig()
-	if err != nil {
-		return fmt.Errorf("receive net config: %w", err)
-	}
-	nc, err := control.ParseNetConfig(raw)
-	if err != nil {
-		return fmt.Errorf("parse net config: %w", err)
-	}
-
-	dev, err := tun.Open("veil0")
-	if err != nil {
-		return err
-	}
-	defer dev.Close()
-
-	cfgr := netcfg.New()
-	if err := cfgr.SetupInterface(dev.Name(), nc.AssignedIP, nc.MTU); err != nil {
-		return fmt.Errorf("configure %s: %w", dev.Name(), err)
-	}
-	log.Printf("veil: %s is %s, gateway %s (transport %s)", dev.Name(), nc.AssignedIP, nc.ServerIP, chosen)
-
-	if opt.FullTunnel {
-		serverIP, err := resolveHost(opt.ServerHost)
-		if err != nil {
-			return fmt.Errorf("full-tunnel: resolve server %q: %w", opt.ServerHost, err)
-		}
-		tr, err := netcfg.FullTunnelUp(dev.Name(), nc.ServerIP, serverIP, nc.DNS, opt.KillSwitch)
-		if err != nil {
-			return fmt.Errorf("full-tunnel setup: %w", err)
-		}
-		defer tr.Down()
-		log.Printf("veil: full-tunnel ON — all traffic via %s (dns %s, kill-switch %v)",
-			dev.Name(), nc.DNS, opt.KillSwitch)
-	}
-
-	errc := make(chan error, 2)
-	go func() { errc <- pumpTunToLink(dev, l) }()
-	go func() { errc <- pumpLinkToTun(l, dev) }()
-
-	select {
-	case <-ctx.Done():
-		return nil
-	case err := <-errc:
-		return err
 	}
 }
 

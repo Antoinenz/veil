@@ -12,6 +12,8 @@ import (
 
 // ifreq mirrors the kernel's struct ifreq for the TUNSETIFF ioctl: a 16-byte
 // interface name followed by a 16-bit flags field (padded to the union size).
+const defaultName = "veil0"
+
 type ifreq struct {
 	name  [unix.IFNAMSIZ]byte
 	flags uint16
