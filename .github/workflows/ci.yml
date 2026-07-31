@@ -119,7 +119,8 @@ jobs:
       - name: install Fyne build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev libxxf86vm-dev libxkbcommon-dev
+          sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev libxxf86vm-dev \
+            libxkbcommon-dev libwayland-dev wayland-protocols
       - name: build binaries
         env:
           CGO_ENABLED: '1'
