@@ -23,10 +23,11 @@ jobs:
           if [ -n "$unformatted" ]; then
             echo "These files need gofmt:"; echo "$unformatted"; exit 1
           fi
+      # cmd/veil-gui is Cgo/Fyne (built by the dedicated GUI jobs); exclude it here.
       - name: vet
-        run: go vet ./...
+        run: go vet ./internal/... ./cmd/veil ./cmd/veil-server
       - name: test
-        run: go test -race ./...
+        run: go test -race ./internal/... ./cmd/veil ./cmd/veil-server
 
   cross-build:
     runs-on: ubuntu-latest
@@ -66,9 +67,9 @@ jobs:
           go-version: '1.23'
           cache: true
       - name: vet
-        run: go vet ./...
+        run: go vet ./internal/... ./cmd/veil ./cmd/veil-server
       - name: test
-        run: go test ./...
+        run: go test ./internal/... ./cmd/veil ./cmd/veil-server
       - name: build veil.exe
         run: go build -ldflags "-s -w" -o dist/veil.exe ./cmd/veil
       - name: build veil-gui.exe (Fyne, cgo)
