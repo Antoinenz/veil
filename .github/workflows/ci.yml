@@ -55,3 +55,41 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: go build ./cmd/veil-server
+
+  windows-artifact:
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test ./...
+      - name: build veil.exe
+        run: go build -ldflags "-s -w" -o dist/veil.exe ./cmd/veil
+      - name: fetch wintun.dll (amd64)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://www.wintun.net/builds/wintun-0.14.1.zip -OutFile wintun.zip
+          Expand-Archive wintun.zip -DestinationPath wt
+          Copy-Item wt/wintun/bin/amd64/wintun.dll dist/wintun.dll
+          @"
+          veil — Windows client
+
+          1. Keep veil.exe and wintun.dll together in this folder.
+          2. Open PowerShell **as Administrator** in this folder.
+          3. Enroll:  .\veil.exe login --data-dir C:\veil <server-host> <invite>
+          4. Connect: .\veil.exe up --data-dir C:\veil
+             (--full is not supported on Windows yet; split-tunnel works)
+
+          wintun.dll is from https://www.wintun.net (WireGuard project), bundled for convenience.
+          "@ | Out-File -Encoding utf8 dist/README.txt
+      - name: upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: veil-windows-amd64
+          path: dist/

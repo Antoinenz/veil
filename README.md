@@ -119,7 +119,13 @@ automated network-namespace test.
   - [x] verified live via `deploy/scripts/e2e-netns.sh` (`MODE=normal|blockudp|full`):
         enroll → connect (udp/wss) → ping/full-tunnel egress → un-enrolled rejected
   - [ ] later: admin web UI, per-network transport memory persistence
-- [ ] **M4** — Windows (Wintun, service, firewall) + tray GUI
+- [~] **M4** — native Windows client (Wintun)
+  - [x] Wintun TUN device (`internal/tun/tun_windows.go`)
+  - [x] Windows netcfg via `netsh` (IP + MTU); **split-tunnel `veil up` works**
+  - [x] CI builds a ready-to-run `veil.exe` + `wintun.dll` artifact (Actions)
+  - [ ] full-tunnel routing/DNS on Windows; Windows service; firewall kill-switch
+- [ ] **M7 — GUI**: cross-platform tray app (one-button connect) talking to the
+      daemon over local IPC; status + server picker
 - [x] **M5** — hardening + packaging, verified live
   - [x] **Let's Encrypt autocert** for real domains, self-signed fallback for
         IP/dev (`internal/certutil` `ServerTLSConfig`)

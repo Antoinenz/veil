@@ -64,6 +64,27 @@ The invite code is printed by `veil-server init` (and `veil-server invite`).
 `login` prints the fetched server-key fingerprint — compare it with the
 fingerprint `veil-server init` printed to detect a man-in-the-middle.
 
+## Windows client (native, Wintun)
+
+The Windows client is built by CI. From the repo's **Actions** tab, open the
+latest run and download the **`veil-windows-amd64`** artifact — it contains
+`veil.exe` and `wintun.dll` (keep them in the same folder).
+
+Then, in **PowerShell running as Administrator**:
+
+```powershell
+.\veil.exe login --data-dir C:\veil <server-host> <invite>
+.\veil.exe up    --data-dir C:\veil
+# in another admin shell, ping the server's tunnel IP (e.g. 10.66.0.1)
+```
+
+Notes:
+- Requires Administrator (Wintun adapter creation + `netsh`) and `wintun.dll`
+  beside `veil.exe`.
+- `--full` (route all traffic) is **not yet supported on Windows** — split-tunnel
+  (reach the veil network + server + other peers) works today; full-tunnel is a
+  follow-up so route/DNS changes can be validated before shipping.
+
 ## Troubleshooting
 
 | Symptom | Fix |
