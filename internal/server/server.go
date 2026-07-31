@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"net/netip"
+	"path/filepath"
 	"sync"
 
 	"github.com/veilvpn/veil/internal/certutil"
@@ -92,7 +93,8 @@ func (s *Server) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	cert, err := certutil.SelfSigned(s.cfg.Domain)
+	tlsCfg, err := certutil.ServerTLSConfig(
+		s.cfg.Domain, filepath.Join(s.cfg.DataDir, "acme"), s.cfg.ACMEEmail, s.cfg.ACME)
 	if err != nil {
 		return err
 	}
@@ -101,7 +103,7 @@ func (s *Server) Run(ctx context.Context) error {
 	controlMux := http.NewServeMux()
 	controlMux.HandleFunc(control.EnrollPath, s.handleEnroll)
 	controlMux.Handle("/", transport.DecoyHandler())
-	wssLis, err := transport.ListenWSS(s.cfg.ListenTLS, cert, controlMux)
+	wssLis, err := transport.ListenWSS(s.cfg.ListenTLS, tlsCfg, controlMux, s.cfg.TunnelToken)
 	if err != nil {
 		udpLis.Close()
 		return err
@@ -294,6 +296,7 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(control.EnrollResponse{
 		ServerPublicKey: base64.StdEncoding.EncodeToString(s.kp.Public.Bytes()),
 		Fingerprint:     s.fingerprint,
+		TunnelToken:     s.cfg.TunnelToken,
 	})
 }
 

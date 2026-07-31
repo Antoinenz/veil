@@ -93,16 +93,17 @@ func TestTunnelOverTLS(t *testing.T) {
 }
 
 func TestTunnelOverWSS(t *testing.T) {
-	cert, err := certutil.SelfSigned("127.0.0.1")
+	tlsCfg, err := certutil.SelfSignedConfig("127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	lis, err := transport.ListenWSS("127.0.0.1:0", cert, nil)
+	const token = "test-tunnel-token"
+	lis, err := transport.ListenWSS("127.0.0.1:0", tlsCfg, nil, token)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer lis.Close()
 	runTunnelEcho(t, lis, func(ctx context.Context) (transport.Conn, error) {
-		return transport.WSSDialer{ServerName: "127.0.0.1"}.Dial(ctx, "wss://"+lis.Addr().String()+transport.TunnelPath)
+		return transport.WSSDialer{ServerName: "127.0.0.1", AuthToken: token}.Dial(ctx, "wss://"+lis.Addr().String()+transport.TunnelPath)
 	})
 }

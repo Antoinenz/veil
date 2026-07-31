@@ -1,0 +1,18 @@
+[Unit]
+Description=veil VPN client
+Documentation=https://github.com/Antoinenz/veil
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Enroll first: `sudo veil login --data-dir /etc/veil <host> <invite>`.
+# Add --full for a full-tunnel VPN (all traffic through the server).
+ExecStart=/usr/local/bin/veil up --data-dir /etc/veil
+Restart=on-failure
+RestartSec=3
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+ReadWritePaths=/etc/veil
+
+[Install]
+WantedBy=multi-user.target

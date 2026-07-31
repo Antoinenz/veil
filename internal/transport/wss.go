@@ -22,6 +22,11 @@ const wsReadLimit = 1 << 20
 // path is served by the decoy site, so the server looks like an ordinary website.
 const TunnelPath = "/veil"
 
+// authHeader carries the per-server tunnel token on the WSS upgrade request.
+// Requests to TunnelPath without the correct token are served the decoy site, so
+// an active prober cannot distinguish the endpoint from an ordinary website.
+const authHeader = "X-Veil-Auth"
+
 // --- client side ---------------------------------------------------------
 
 // WSSDialer tunnels veil frames inside a WebSocket over TLS on :443. This is the
@@ -30,6 +35,8 @@ const TunnelPath = "/veil"
 type WSSDialer struct {
 	// ServerName is the TLS SNI / Host used when dialing (usually the domain).
 	ServerName string
+	// AuthToken is the per-server tunnel token presented on the upgrade request.
+	AuthToken string
 }
 
 // Name implements Dialer.
@@ -48,7 +55,11 @@ func (d WSSDialer) Dial(ctx context.Context, endpoint string) (Conn, error) {
 			},
 		},
 	}
-	c, _, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{HTTPClient: httpClient})
+	opts := &websocket.DialOptions{HTTPClient: httpClient}
+	if d.AuthToken != "" {
+		opts.HTTPHeader = http.Header{authHeader: []string{d.AuthToken}}
+	}
+	c, _, err := websocket.Dial(ctx, endpoint, opts)
 	if err != nil {
 		return nil, fmt.Errorf("wss dial %s: %w", endpoint, err)
 	}
@@ -103,33 +114,36 @@ type WSSListener struct {
 	accept chan Conn
 	closed chan struct{}
 	once   sync.Once
+
+	handler http.Handler // decoy / control-plane routes
+	token   string       // required on the upgrade if non-empty
 }
 
-// ListenWSS binds an HTTPS listener on addr using cert. Requests to TunnelPath
-// become tunnel connections returned by Accept; all other requests are handled
-// by decoy (a default plausible page is used if decoy is nil).
-func ListenWSS(addr string, cert tls.Certificate, decoy http.Handler) (*WSSListener, error) {
+// ListenWSS binds an HTTPS listener on addr using tlsConfig. Requests to
+// TunnelPath that present the correct token become tunnel connections returned
+// by Accept; every other request — including token-less probes to TunnelPath —
+// is served by handler (a default decoy page if handler is nil). An empty token
+// disables the check.
+func ListenWSS(addr string, tlsConfig *tls.Config, handler http.Handler, token string) (*WSSListener, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("listen wss %s: %w", addr, err)
 	}
-	tlsLn := tls.NewListener(ln, &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
-		NextProtos:   []string{"http/1.1"},
-	})
+	tlsLn := tls.NewListener(ln, tlsConfig)
 
-	l := &WSSListener{
-		ln:     ln,
-		accept: make(chan Conn, 16),
-		closed: make(chan struct{}),
+	if handler == nil {
+		handler = http.HandlerFunc(defaultDecoy)
 	}
-	if decoy == nil {
-		decoy = http.HandlerFunc(defaultDecoy)
+	l := &WSSListener{
+		ln:      ln,
+		accept:  make(chan Conn, 16),
+		closed:  make(chan struct{}),
+		handler: handler,
+		token:   token,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc(TunnelPath, l.handleUpgrade)
-	mux.Handle("/", decoy)
+	mux.Handle("/", handler)
 	l.srv = &http.Server{
 		Handler: mux,
 		// Silence per-connection TLS/HTTP noise (e.g. transport probes that
@@ -142,6 +156,12 @@ func ListenWSS(addr string, cert tls.Certificate, decoy http.Handler) (*WSSListe
 }
 
 func (l *WSSListener) handleUpgrade(w http.ResponseWriter, r *http.Request) {
+	// Active-probing resistance: without the right token, TunnelPath is
+	// indistinguishable from the rest of the (decoy) site.
+	if l.token != "" && r.Header.Get(authHeader) != l.token {
+		l.handler.ServeHTTP(w, r)
+		return
+	}
 	c, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		return

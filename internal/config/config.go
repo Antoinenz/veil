@@ -43,6 +43,16 @@ type ServerConfig struct {
 	EgressInterface string `json:"egress_interface"`
 	// DNS is the upstream resolver offered to clients.
 	DNS string `json:"dns"`
+	// ACME enables automatic Let's Encrypt certificates (requires Domain to be a
+	// real DNS name resolving to this host, with :443 publicly reachable). When
+	// false, or when Domain is an IP, a self-signed certificate is used.
+	ACME bool `json:"acme"`
+	// ACMEEmail is the optional contact email for Let's Encrypt.
+	ACMEEmail string `json:"acme_email,omitempty"`
+	// TunnelToken gates the WSS upgrade: clients must present it, otherwise the
+	// server serves only the decoy site (active-probing resistance). Generated
+	// at init and handed to clients during enrollment.
+	TunnelToken string `json:"tunnel_token,omitempty"`
 }
 
 // ClientConfig configures a client/device.
@@ -54,6 +64,9 @@ type ClientConfig struct {
 	// ServerPublicKey is the server's static X25519 public key (base64 std),
 	// required by the initiator for the Noise IK handshake. Learned at enrollment.
 	ServerPublicKey string `json:"server_public_key"`
+	// TunnelToken authenticates the WSS upgrade to the server (obtained at
+	// enrollment). Without it the WSS transport is unavailable (UDP/TLS still work).
+	TunnelToken string `json:"tunnel_token,omitempty"`
 	// UDPPort / TLSPort are the server ports for the UDP and TLS-based (TLS/WSS)
 	// transports respectively. Both default to "443".
 	UDPPort string `json:"udp_port,omitempty"`

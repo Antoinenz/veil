@@ -106,6 +106,7 @@ func cmdLogin(args []string) error {
 		}
 		cfg.ServerPublicKey = er.ServerPublicKey
 		cfg.ServerKeyFingerprint = er.Fingerprint
+		cfg.TunnelToken = er.TunnelToken
 		fmt.Printf("enrolled with %s\n", server)
 		fmt.Printf("server fingerprint: %s  (compare with `veil-server init` output)\n", er.Fingerprint)
 	}

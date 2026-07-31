@@ -37,6 +37,8 @@ type Options struct {
 	TLSPort string
 	// Order is the transport priority order (defaults to config.DefaultTransportOrder).
 	Order []config.TransportName
+	// TunnelToken authenticates the WSS upgrade (empty = WSS unavailable).
+	TunnelToken string
 	// HandshakeTimeout bounds the whole auto-selection attempt.
 	HandshakeTimeout time.Duration
 
@@ -68,6 +70,7 @@ func FromConfig(cfg config.ClientConfig, device *noise.KeyPair, serverStatic []b
 		UDPPort:          orDefault(cfg.UDPPort, "443"),
 		TLSPort:          orDefault(cfg.TLSPort, "443"),
 		Order:            order,
+		TunnelToken:      cfg.TunnelToken,
 		HandshakeTimeout: time.Duration(cfg.HandshakeTimeout),
 		FullTunnel:       cfg.FullTunnel,
 		KillSwitch:       cfg.KillSwitch,
@@ -209,7 +212,7 @@ func candidates(opt Options) []candidate {
 	build := map[config.TransportName]candidate{
 		config.TransportUDP: {config.TransportUDP, transport.UDPDialer{}, net.JoinHostPort(opt.ServerHost, opt.UDPPort)},
 		config.TransportTLS: {config.TransportTLS, transport.TLSDialer{ServerName: sni}, net.JoinHostPort(opt.ServerHost, opt.TLSPort)},
-		config.TransportWSS: {config.TransportWSS, transport.WSSDialer{ServerName: sni}, "wss://" + net.JoinHostPort(opt.ServerHost, opt.TLSPort) + transport.TunnelPath},
+		config.TransportWSS: {config.TransportWSS, transport.WSSDialer{ServerName: sni, AuthToken: opt.TunnelToken}, "wss://" + net.JoinHostPort(opt.ServerHost, opt.TLSPort) + transport.TunnelPath},
 	}
 	var out []candidate
 	for _, name := range opt.Order {

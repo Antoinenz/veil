@@ -96,6 +96,7 @@ func cmdInit(args []string) error {
 	cfg := config.DefaultServer()
 	cfg.Domain = *domain
 	cfg.DataDir = *dataDir
+	cfg.TunnelToken = newToken()
 	cfgPath := filepath.Join(*dataDir, "server.json")
 	if err := config.Save(cfgPath, cfg); err != nil {
 		return err
@@ -240,4 +241,11 @@ func newInvite() string {
 	_, _ = rand.Read(b[:])
 	enc := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:]))
 	return enc[:4] + "-" + enc[4:8] + "-" + enc[8:12] + "-" + enc[12:16]
+}
+
+// newToken returns a random high-entropy tunnel token (gates the WSS upgrade).
+func newToken() string {
+	var b [24]byte
+	_, _ = rand.Read(b[:])
+	return strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:]))
 }

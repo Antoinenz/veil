@@ -16,4 +16,6 @@ type EnrollRequest struct {
 type EnrollResponse struct {
 	ServerPublicKey string `json:"server_public_key"` // base64
 	Fingerprint     string `json:"fingerprint"`
+	// TunnelToken authenticates the WSS upgrade (active-probing resistance).
+	TunnelToken string `json:"tunnel_token,omitempty"`
 }

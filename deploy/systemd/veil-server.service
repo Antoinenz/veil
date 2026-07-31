@@ -1,0 +1,19 @@
+[Unit]
+Description=veil VPN gateway
+Documentation=https://github.com/Antoinenz/veil
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/veil-server run --config /etc/veil/server.json
+Restart=on-failure
+RestartSec=3
+# Managing the TUN device, routing and nftables/iptables needs these caps.
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+# Let's Encrypt / device store live here.
+StateDirectory=veil
+ReadWritePaths=/etc/veil
+
+[Install]
+WantedBy=multi-user.target

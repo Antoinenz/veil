@@ -73,6 +73,14 @@ sudo ./bin/veil login --data-dir /etc/veil <host-or-ip> <invite>         # enrol
 sudo ./bin/veil up    --data-dir /etc/veil
 ```
 
+Or install with systemd: `sudo bash deploy/install.sh`, then
+`sudo systemctl enable --now veil-server`.
+
+**Production TLS:** with a real domain pointed at the server and `:443` publicly
+reachable, set `"acme": true` (and optionally `"acme_email"`) in `server.json`
+for automatic Let's Encrypt certificates. On an IP/dev host it uses a self-signed
+cert — fine, since the tunnel's trust is the pinned Noise key (TLS is camouflage).
+
 See [`docs/testing.md`](docs/testing.md) for a full two-machine walkthrough and the
 automated network-namespace test.
 
@@ -112,7 +120,14 @@ automated network-namespace test.
         enroll → connect (udp/wss) → ping/full-tunnel egress → un-enrolled rejected
   - [ ] later: admin web UI, per-network transport memory persistence
 - [ ] **M4** — Windows (Wintun, service, firewall) + tray GUI
-- [ ] **M5** — active-probing resistance (decoy site), autocert, one-line self-host, docs
+- [x] **M5** — hardening + packaging, verified live
+  - [x] **Let's Encrypt autocert** for real domains, self-signed fallback for
+        IP/dev (`internal/certutil` `ServerTLSConfig`)
+  - [x] **active-probing resistance**: the `/veil` upgrade is gated by a secret
+        tunnel token (issued at enrollment); token-less probes get only the
+        decoy site (`internal/transport`, tested)
+  - [x] **packaging**: systemd units + `deploy/install.sh` (one-command
+        install); Docker/compose already present
 - [ ] **M6** — QUIC/HTTP3, mesh + NAT hole-punching + relay, mobile, OIDC
 
 ## License
